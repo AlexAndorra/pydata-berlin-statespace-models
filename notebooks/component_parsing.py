@@ -9,13 +9,113 @@ NB: This is still a work in progress, and probably need to be expanded to more c
 
 from __future__ import annotations
 
+import logging
 import re
+from functools import partial
 
 from collections.abc import Sequence
 
 import pandas as pd
 import xarray as xr
 
+# Set up logging
+_log = logging.getLogger(__name__)
+
+def extract_components_from_idata(
+        self, idata: xr.Dataset, restructure: bool = False
+    ) -> xr.Dataset:
+        r"""
+        Extract interpretable hidden states from an InferenceData returned by a PyMCStateSpace sampling method
+
+        Parameters
+        ----------
+        idata : Dataset
+            A Dataset object, returned by a PyMCStateSpace sampling method
+        restructure : bool, default False
+            Whether to restructure the state coordinates as a multi-index for easier component selection.
+            When True, enables selections like `idata.sel(component='level')` and `idata.sel(observed='gdp')`.
+            Particularly useful for multivariate models with multiple observed states.
+
+        Returns
+        -------
+        idata : Dataset
+            A Dataset object with hidden states transformed to represent only the "interpretable" subcomponents
+            of the structural model. If `restructure=True`, the state coordinate will be a multi-index with
+            levels ['component', 'observed'] for easier selection.
+
+        Notes
+        -----
+        In general, a structural statespace model can be represented as:
+
+        .. math::
+            y_t = \mu_t + \nu_t + \cdots + \gamma_t + c_t + \xi_t + \epsilon_t \tag{1}
+
+        Where:
+
+            - :math:`\mu_t` is the level of the data at time t
+            - :math:`\nu_t` is the slope of the data at time t
+            - :math:`\cdots` are higher time derivatives of the position (acceleration, jerk, etc) at time t
+            - :math:`\gamma_t` is the seasonal component at time t
+            - :math:`c_t` is the cycle component at time t
+            - :math:`\xi_t` is the autoregressive error at time t
+            - :math:`\varepsilon_t` is the measurement error at time t
+
+        In state space form, some or all of these components are represented as linear combinations of other
+        subcomponents, making interpretation of the outputs difficult. The purpose of this function is
+        to take the expended statespace representation and return a "reduced form" of only the components shown in
+        equation (1).
+
+        When `restructure=True`, the returned dataset allows for easy component selection, especially for
+        multivariate models with multiple observed states.
+        """
+
+        def _extract_and_transform_variable(idata, new_state_names):
+            *_, time_dim, state_dim = idata.dims
+            state_func = partial(self._hidden_states_from_data)
+            new_idata = xr.apply_ufunc(
+                state_func,
+                idata,
+                input_core_dims=[[time_dim, state_dim]],
+                output_core_dims=[[time_dim, state_dim]],
+                exclude_dims={state_dim},
+            )
+            new_idata.coords.update({state_dim: new_state_names})
+            return new_idata
+
+        var_names = list(idata.data_vars.keys())
+        is_latent = [idata[name].shape[-1] == self.k_states for name in var_names]
+        new_state_names = self._get_subcomponent_names()
+
+        latent_names = [name for latent, name in zip(is_latent, var_names) if latent]
+        dropped_vars = set(var_names) - set(latent_names)
+        if len(dropped_vars) > 0:
+            _log.warning(
+                f"Variables {', '.join(dropped_vars)} do not contain all hidden states (their last dimension "
+                f"is not {self.k_states}). They will not be present in the modified idata."
+            )
+        if len(dropped_vars) == len(var_names):
+            raise ValueError(
+                "Provided idata had no variables with all hidden states; cannot extract components."
+            )
+
+        idata_new = xr.Dataset(
+            {
+                name: _extract_and_transform_variable(idata[name], new_state_names)
+                for name in latent_names
+            }
+        )
+
+        if restructure:
+            try:
+                idata_new = restructure_components_idata(idata_new)
+            except Exception as e:
+                _log.warning(
+                    f"Failed to restructure components with multi-index: {e}. "
+                    "Returning dataset with original string-based state names. "
+                    "You can call restructure_components_idata() manually if needed."
+                )
+
+        return idata_new
 
 def parse_component_state_name(state_name: str) -> tuple[str, str]:
     """
