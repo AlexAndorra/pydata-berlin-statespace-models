@@ -2,6 +2,12 @@
 
 > A hands-on [PyData tutorial](https://cfp.pydata.org/berlin2025/talk/GRZ3RG/), by [Alexandre Andorra](https://www.linkedin.com/in/alex-andorra/) and [Jesse Grabowski](https://www.linkedin.com/in/jessegrabowski/)
 
+---
+
+## 📹 [Video of the tutorial](https://www.youtube.com/watch?v=lXU5dr6Lmgo&list=PLGVZCDnMOq0qKhzuzHGHiSAJRwKnlCIeS&index=18)
+
+---
+
 We believe this tutorial will empower participants with practical knowledge of state space modeling in PyMC, enabling them to effectively analyze complex time series data using Bayesian approaches.
 
 ## Setup
